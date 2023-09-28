@@ -1,5 +1,7 @@
 #  coding: utf-8 
 import socketserver
+import re
+import mimetypes
 
 # Copyright 2013 Abram Hindle, Eddie Antonio Santos
 # 
@@ -25,14 +27,55 @@ import socketserver
 # run: python freetests.py
 
 # try: curl -v -X GET http://127.0.0.1:8080/
-
+document_root = "./www"
 
 class MyWebServer(socketserver.BaseRequestHandler):
     
     def handle(self):
         self.data = self.request.recv(1024).strip()
-        print ("Got a request of: %s\n" % self.data)
-        self.request.sendall(bytearray("OK",'utf-8'))
+        request = self.data.decode('utf-8')
+        request_lines = request.splitlines()
+        ret = re.match(r"([^/]*)([^ ]+)",request_lines[0])
+        if ret:
+            path = ret.group(2)
+            if path.endswith("/"):
+                path += "index.html"
+        if not request.startswith("GET"):
+            # Handle unsupported methods with a 405 error
+            response_header = "HTTP/1.1 405 Method Not Allowed\r\n"
+            response_header += "\r\n"
+            response_body = "405 Method Not Allowed!"
+            self.request.send(response_header.encode('utf-8'))
+            self.request.send(response_body.encode('utf-8'))
+            return
+        elif not path.endswith((".html", ".css", "/")):
+            path += "/"
+            response_header = f"HTTP/1.1 301 Moved Permanently\r\n"
+            response_header += f"Location: {path}\r\n"
+            self.request.send(response_header.encode('utf-8'))
+            return
+        else:
+            try:
+                with open(document_root + path, "rb") as f_n:
+                    content = f_n.read()
+                    # Determine MIME type
+                    mime_type, _ = mimetypes.guess_type(path)
+                    if mime_type is not None:
+                        response_header = f"HTTP/1.1 200 OK\r\n"
+                        response_header += f"Content-Type: {mime_type}\r\n"
+                        response_header += "\r\n"
+                        self.request.send(response_header.encode('utf-8'))
+                        self.request.send(content)
+                        f_n.close()
+            except BaseException:
+                # Handle 404 Not Found
+                response_header = "HTTP/1.1 404 Not Found\r\n"
+                response_header += "\r\n"
+                response_body = "404 Not Found!"
+                self.request.send(response_header.encode('utf-8'))
+                self.request.send(response_body.encode('utf-8'))
+
+        self.request.close()
 
 if __name__ == "__main__":
     HOST, PORT = "localhost", 8080
